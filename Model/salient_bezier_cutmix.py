@@ -110,7 +110,7 @@ def contrast_stretch(img, low_pct=2, high_pct=98):
         out[:,:,c] = np.clip((img[:,:,c] - low) / (high - low + 1e-8), 0, 1)
     return out
 
-def extract_regions_from_cam(cam_mask, threshold=0.2, min_area=1000):
+def extract_regions_from_cam(cam_mask, threshold=0.2, min_area=250):
     """
     cam_mask: 2D array normalized 0..1 (grayscale_cam_norm or similar)
     returns: labeled_mask, list of region dicts {label, area, bbox, centroid, coords_mask}
@@ -139,7 +139,7 @@ def extract_regions_from_cam(cam_mask, threshold=0.2, min_area=1000):
         })
     return labeled, regions
 
-def bezier_like_polygon_points(center, area_pixels, img_shape, n_points=8, 
+def bezier_like_polygon_points(center, area_pixels, img_shape, n_points=16, 
                                min_scale=0.6, max_scale=1.3, jitter_angle=0.5):
     """
     Create polygon points around center. radius scales with sqrt(area).
@@ -285,7 +285,7 @@ def get_random_points(n=5, scale=0.8, mindst=None, rec=0):
     else:
         return get_random_points(n=n, scale=scale, mindst=mindst, rec=rec + 1)
 
-def cam_region_to_bezier_mask(cam_mask, threshold=0.8, rad=0.3, edgy=0.2, blur_radius=5):
+def cam_region_to_bezier_mask(cam_mask, threshold=0.1, rad=0.5, edgy=0.8, blur_radius=2):
     """
     Convert high-activation CAM regions into soft Bezier masks.
     cam_mask: 2D np.array normalized [0,1]
@@ -361,7 +361,7 @@ def apply_cam_and_mask(model, img_array, device="cuda"):
         gcam = gcam.squeeze()
     
     # Generate mask
-    masks = cam_region_to_bezier_mask(gcam, threshold=0.3, rad=0.9, edgy=0.5, blur_radius=2)
+    masks = cam_region_to_bezier_mask(gcam, threshold=0.1, rad=0.5, edgy=0.8, blur_radius=2)
 
     H, W = gcam.shape
     mask_total = np.zeros((H, W), dtype=np.uint8)
@@ -469,7 +469,8 @@ def salient_and_rect_dual_save_pipeline(
     n=250,
     device="cuda",
     prefix="aug",
-    rect_alpha=1.0
+    rect_alpha=1.0,
+    inverse = None
 ):
     """
     For each pair (target, source):
@@ -543,8 +544,14 @@ def salient_and_rect_dual_save_pipeline(
 
         mixed_sal = cv2.resize(mixed_sal, (256, 256), interpolation=cv2.INTER_LINEAR)
         mixed_rect = cv2.resize(mixed_rect, (256, 256), interpolation=cv2.INTER_LINEAR)
-        sal_mask = cv2.resize(sal_mask, (256, 256), interpolation=cv2.INTER_LINEAR)
-        rect_mask = cv2.resize(rect_mask, (256, 256), interpolation=cv2.INTER_LINEAR)
+
+        # --- INVERSE ---
+        if inverse == True:
+            sal_mask = cv2.resize((1 - sal_mask[..., None] ), (256, 256), interpolation=cv2.INTER_LINEAR)
+            rect_mask = cv2.resize((1 - rect_mask[..., None] ), (256, 256), interpolation=cv2.INTER_LINEAR)
+        else :
+            sal_mask = cv2.resize(sal_mask, (256, 256), interpolation=cv2.INTER_LINEAR)
+            rect_mask = cv2.resize(rect_mask, (256, 256), interpolation=cv2.INTER_LINEAR)
 
         # --- PROFILES (match output size; adjust transform if resized) ---
         img_profile   = profile.copy()
@@ -574,8 +581,8 @@ def salient_and_rect_dual_save_pipeline(
             label_profile["transform"] = img_profile["transform"]
 
         # --- SAVE: salient ---
-        img_path_sal = os.path.join(img_sal_dir,  f"{prefix}_image_{i:04d}.tif")
-        lab_path_sal = os.path.join(lab_sal_dir,  f"{prefix}_label_{i:04d}.tif")
+        img_path_sal = os.path.join(img_sal_dir,  f"{prefix}3_image_{i:04d}.tif")
+        lab_path_sal = os.path.join(lab_sal_dir,  f"{prefix}3_label_{i:04d}.tif")
         with rasterio.open(img_path_sal, "w", **img_profile) as dst:
             for b in range(mixed_sal.shape[2]):
                 dst.write(mixed_sal[:, :, b], b + 1)
@@ -583,8 +590,8 @@ def salient_and_rect_dual_save_pipeline(
             dst.write((sal_mask > 0.25).astype(np.uint8), 1)
 
         # --- SAVE: rect ---
-        img_path_rect = os.path.join(img_rect_dir, f"{prefix}_image_{i:04d}.tif")
-        lab_path_rect = os.path.join(lab_rect_dir, f"{prefix}_label_{i:04d}.tif")
+        img_path_rect = os.path.join(img_rect_dir, f"{prefix}3_image_{i:04d}.tif")
+        lab_path_rect = os.path.join(lab_rect_dir, f"{prefix}3_label_{i:04d}.tif")
         with rasterio.open(img_path_rect, "w", **img_profile) as dst:
             for b in range(mixed_rect.shape[2]):
                 dst.write(mixed_rect[:, :, b], b + 1)
